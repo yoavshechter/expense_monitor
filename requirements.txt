@@ -4,3 +4,4 @@ matplotlib
 python-bidi
 google-genai
 openpyxl
+bcrypt

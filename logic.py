@@ -2,12 +2,12 @@ import pandas as pd
 from datetime import datetime
 import db
 
-def get_projection_status(year):
+def get_projection_status(user_id, year):
     """
     Calculates the status of expenses vs projection for each category.
     """
-    categories_df = db.get_categories()
-    yearly_expenses_df = db.get_yearly_expenses(year)
+    categories_df = db.get_categories(user_id)
+    yearly_expenses_df = db.get_yearly_expenses(user_id, year)
     
     # Merge categories with actual expenses
     if not yearly_expenses_df.empty:
@@ -32,12 +32,12 @@ def get_projection_status(year):
         
     return merged_df
 
-def get_monthly_summary(year, month):
+def get_monthly_summary(user_id, year, month):
     """
     Get summary of expenses for a specific month compared to the average monthly allowance.
     """
-    monthly_expenses = db.get_monthly_expenses(year, month)
-    projection_status = get_projection_status(year)
+    monthly_expenses = db.get_monthly_expenses(user_id, year, month)
+    projection_status = get_projection_status(user_id, year)
     
     # Calculate the ideal monthly spend based on yearly projection / 12
     # This is a simple average, not adjusting for seasonality or past overspending

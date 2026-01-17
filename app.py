@@ -16,21 +16,73 @@ def main():
     # Initialize DB
     db.init_db()
 
+    # Authentication
+    if 'user_id' not in st.session_state:
+        st.session_state['user_id'] = None
+
+    if st.session_state['user_id'] is None:
+        show_login_page()
+    else:
+        show_main_app()
+
+def show_login_page():
+    st.subheader("Login / Register")
+    
+    tab1, tab2 = st.tabs(["Login", "Register"])
+    
+    with tab1:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Login")
+            
+            if submitted:
+                user_id = db.verify_user(username, password)
+                if user_id:
+                    st.session_state['user_id'] = user_id
+                    st.success("Logged in successfully!")
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password")
+
+    with tab2:
+        with st.form("register_form"):
+            new_username = st.text_input("New Username")
+            new_password = st.text_input("New Password", type="password")
+            submitted = st.form_submit_button("Register")
+            
+            if submitted:
+                if new_username and new_password:
+                    if db.create_user(new_username, new_password):
+                        st.success("User created successfully! Please login.")
+                    else:
+                        st.error("Username already exists")
+                else:
+                    st.error("Please fill in all fields")
+
+def show_main_app():
+    user_id = st.session_state['user_id']
+    
     # Sidebar for navigation
+    st.sidebar.write(f"Logged in as user ID: {user_id}")
+    if st.sidebar.button("Logout"):
+        st.session_state['user_id'] = None
+        st.rerun()
+        
     page = st.sidebar.selectbox("Navigate", ["Dashboard", "Add Expense", "Add Income", "Import Expenses", "Manage Categories"])
 
     if page == "Dashboard":
-        show_dashboard()
+        show_dashboard(user_id)
     elif page == "Add Expense":
-        show_add_expense()
+        show_add_expense(user_id)
     elif page == "Add Income":
-        show_add_income()
+        show_add_income(user_id)
     elif page == "Import Expenses":
-        show_import_expenses()
+        show_import_expenses(user_id)
     elif page == "Manage Categories":
-        show_manage_categories()
+        show_manage_categories(user_id)
 
-def show_dashboard():
+def show_dashboard(user_id):
     st.header("Dashboard")
     
     current_year = datetime.now().year
@@ -49,8 +101,8 @@ def show_dashboard():
     st.subheader(f"Monthly Overview ({selected_month_name} {selected_year})")
     
     # Income Section
-    monthly_income = db.get_monthly_income(selected_year, selected_month)
-    monthly_summary = logic.get_monthly_summary(selected_year, selected_month)
+    monthly_income = db.get_monthly_income(user_id, selected_year, selected_month)
+    monthly_summary = logic.get_monthly_summary(user_id, selected_year, selected_month)
     total_monthly_spent = monthly_summary['monthly_spent'].sum() if not monthly_summary.empty else 0.0
     
     # Calculate percentages
@@ -120,7 +172,7 @@ def show_dashboard():
 
     # Yearly Overview (Collapsed)
     with st.expander(f"View Yearly Overview ({selected_year})"):
-        projection_status = logic.get_projection_status(selected_year)
+        projection_status = logic.get_projection_status(user_id, selected_year)
         
         if not projection_status.empty:
             # Display metrics
@@ -129,7 +181,7 @@ def show_dashboard():
             remaining = total_projected - total_spent
             yearly_utilization = (total_spent / total_projected * 100) if total_projected > 0 else 0
             
-            yearly_income = db.get_yearly_income(selected_year)
+            yearly_income = db.get_yearly_income(user_id, selected_year)
             net_savings = yearly_income - total_spent
             savings_rate = (net_savings / yearly_income * 100) if yearly_income > 0 else 0
             
@@ -162,10 +214,10 @@ def show_dashboard():
         else:
             st.info("No categories found. Please add categories first.")
 
-def show_add_expense():
+def show_add_expense(user_id):
     st.header("Add New Expense")
     
-    categories_df = db.get_categories()
+    categories_df = db.get_categories(user_id)
     
     if categories_df.empty:
         st.warning("Please add categories first!")
@@ -196,15 +248,15 @@ def show_add_expense():
             category_id = int(categories_df[categories_df['name'] == category]['id'].values[0])
             # Default to 1st of the month
             date_str = f"{year}-{month:02d}-01"
-            db.add_expense(category_id, amount, date_str, description)
+            db.add_expense(user_id, category_id, amount, date_str, description)
             st.success("Expense added successfully!")
 
     st.subheader("Recent Expenses")
-    expenses = db.get_expenses()
+    expenses = db.get_expenses(user_id)
     if not expenses.empty:
         st.dataframe(expenses)
 
-def show_add_income():
+def show_add_income(user_id):
     st.header("Add Income")
     
     with st.form("income_form"):
@@ -230,23 +282,18 @@ def show_add_income():
         if submitted:
             # Default to 1st of the month
             date_str = f"{year}-{month:02d}-01"
-            db.add_income(amount, date_str, description, source)
+            db.add_income(user_id, amount, date_str, description, source)
             st.success("Income added successfully!")
 
     st.subheader("Recent Income")
     current_year = datetime.now().year
     current_month = datetime.now().month
-    income_records = db.get_income_records(current_year, current_month)
+    income_records = db.get_income_records(user_id, current_year, current_month)
     if not income_records.empty:
         st.dataframe(income_records)
 
-def show_import_expenses():
+def show_import_expenses(user_id):
     st.header("Import Expenses from File")
-    
-    # API Key Input
-    api_key = st.sidebar.text_input("Gemini API Key", type="password")
-    if not api_key:
-        st.warning("Please enter your Gemini API Key in the sidebar to enable automatic categorization.")
     
     uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=["csv", "xlsx", "xls"])
     
@@ -270,17 +317,13 @@ def show_import_expenses():
             st.dataframe(df.head())
             
             if st.button("Process and Categorize"):
-                with st.spinner("Categorizing expenses using AI..."):
-                    # Get existing categories
-                    categories_df = db.get_categories()
-                    categories_list = categories_df['name'].tolist()
-                    
-                    # Categorize
-                    categorized_df = importer.categorize_expenses(df, categories_list, api_key)
+                with st.spinner("Categorizing expenses..."):
+                    # Categorize using cache
+                    categorized_df = importer.categorize_expenses(df, user_id)
                     
                     # Store in session state for review
                     st.session_state['imported_expenses'] = categorized_df
-                    st.success("Categorization complete! Please review below.")
+                    st.success("Processing complete! Please review below.")
                     
         except Exception as e:
             st.error(f"Error parsing file: {e}")
@@ -294,7 +337,7 @@ def show_import_expenses():
             column_config={
                 "category": st.column_config.SelectboxColumn(
                     "Category",
-                    options=db.get_categories()['name'].tolist() + ["Uncategorized"],
+                    options=db.get_categories(user_id)['name'].tolist() + ["Uncategorized"],
                     required=True
                 )
             },
@@ -303,7 +346,7 @@ def show_import_expenses():
         
         if st.button("Save to Database"):
             count = 0
-            categories_df = db.get_categories()
+            categories_df = db.get_categories(user_id)
             
             for index, row in edited_df.iterrows():
                 # Skip uncategorized or invalid categories
@@ -320,13 +363,17 @@ def show_import_expenses():
                 except:
                     date_str = datetime.now().strftime('%Y-%m-%d') # Fallback
                 
-                db.add_expense(category_id, float(row['amount']), date_str, row['description'])
+                db.add_expense(user_id, category_id, float(row['amount']), date_str, row['description'])
+                
+                # Update cache with manual selection
+                db.cache_category(user_id, row['description'], row['category'])
+                
                 count += 1
                 
-            st.success(f"Successfully saved {count} expenses!")
+            st.success(f"Successfully saved {count} expenses and updated cache!")
             del st.session_state['imported_expenses']
 
-def show_manage_categories():
+def show_manage_categories(user_id):
     st.header("Manage Categories")
     
     with st.form("category_form"):
@@ -345,14 +392,14 @@ def show_manage_categories():
                 # Convert monthly to yearly if needed
                 yearly_projection = int(amount * 12) if projection_type == "Monthly" else int(amount)
                 
-                if db.add_category(name, yearly_projection):
+                if db.add_category(user_id, name, yearly_projection):
                     st.success(f"Category '{name}' added with yearly projection of ₪{yearly_projection:,}!")
                 else:
                     # If add fails, try to update
-                    cats = db.get_categories()
+                    cats = db.get_categories(user_id)
                     if name in cats['name'].values:
                         cat_id = cats[cats['name'] == name]['id'].values[0]
-                        db.update_category_projection(cat_id, yearly_projection)
+                        db.update_category_projection(user_id, cat_id, yearly_projection)
                         st.success(f"Category '{name}' updated with yearly projection of ₪{yearly_projection:,}!")
                     else:
                         st.error("Error adding category.")
@@ -360,7 +407,7 @@ def show_manage_categories():
                 st.error("Please enter a name.")
 
     st.subheader("Existing Categories")
-    categories = db.get_categories()
+    categories = db.get_categories(user_id)
     if not categories.empty:
         st.dataframe(categories)
         
@@ -371,7 +418,7 @@ def show_manage_categories():
             delete_submitted = st.form_submit_button("Delete Category")
             
             if delete_submitted:
-                if db.delete_category(category_to_delete):
+                if db.delete_category(user_id, category_to_delete):
                     st.success(f"Category '{category_to_delete}' and its expenses deleted successfully!")
                     st.rerun()
                 else:

@@ -88,114 +88,14 @@ class GenericParser(FileParser):
 
 # --- LLM Categorization ---
 
-def categorize_expenses(expenses_df, categories_list, api_key):
+def categorize_expenses(expenses_df, user_id):
     """
-    Uses Gemini to categorize expenses based on description.
-    Implements caching, batching, and retry logic.
+    Categorizes expenses based on cached descriptions for a specific user.
     """
-    if not api_key:
-        return expenses_df
-        
-    client = genai.Client(api_key=api_key)
+    # Check Cache
+    expenses_df['category'] = expenses_df['description'].apply(lambda x: db.get_cached_category(user_id, x))
     
-    # 1. Check Cache First
-    expenses_df['category'] = expenses_df['description'].apply(db.get_cached_category)
+    # Fill missing with "Uncategorized"
+    expenses_df['category'] = expenses_df['category'].fillna("Uncategorized")
     
-    # Identify rows that need categorization (where category is None)
-    uncached_mask = expenses_df['category'].isna()
-    uncached_df = expenses_df[uncached_mask]
-    
-    if uncached_df.empty:
-        st.info("All expenses categorized from cache!")
-        return expenses_df
-        
-    st.info(f"Categorizing {len(uncached_df)} new expenses via AI...")
-    
-    # Batch processing configuration
-    BATCH_SIZE = 15
-    new_categories_map = {} # Map index to category
-    
-    progress_bar = st.progress(0)
-    
-    # Process only uncached expenses
-    for i in range(0, len(uncached_df), BATCH_SIZE):
-        batch = uncached_df.iloc[i:i+BATCH_SIZE]
-        batch_expenses_text = batch[['description', 'amount']].to_json(orient='records')
-        
-        prompt = f"""
-        You are an expense categorization assistant.
-        
-        Categories: {categories_list}
-        
-        Expenses:
-        {batch_expenses_text}
-        
-        Task: Assign the most appropriate category from the list to each expense based on its description.
-        If no category fits well, use "Uncategorized".
-        
-        Return ONLY a JSON array of strings, where each string is the category name corresponding to the expense at that index.
-        Example: ["Food", "Transport", "Uncategorized"]
-        """
-        
-        # Retry logic
-        max_retries = 3
-        retry_delay = 2
-        
-        batch_categories = []
-        success = False
-        
-        for attempt in range(max_retries):
-            try:
-                response = client.models.generate_content(
-                    model='gemini-2.0-flash',
-                    contents=prompt
-                )
-                
-                text = response.text.strip()
-                if text.startswith('```json'):
-                    text = text[7:-3]
-                elif text.startswith('```'):
-                    text = text[3:-3]
-                    
-                batch_categories = json.loads(text)
-                
-                if len(batch_categories) == len(batch):
-                    success = True
-                    break
-                else:
-                    print(f"Batch mismatch: Expected {len(batch)}, got {len(batch_categories)}")
-                    break
-                    
-            except Exception as e:
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                    if attempt < max_retries - 1:
-                        sleep_time = retry_delay * (2 ** attempt)
-                        st.warning(f"Rate limit hit. Retrying in {sleep_time}s...")
-                        time.sleep(sleep_time)
-                    else:
-                        st.error(f"Failed to categorize batch due to rate limits.")
-                else:
-                    st.error(f"Error calling LLM: {e}")
-                    break
-        
-        if success:
-            # Update map and cache
-            for idx, (orig_idx, row) in enumerate(batch.iterrows()):
-                category = batch_categories[idx]
-                new_categories_map[orig_idx] = category
-                # Cache the result
-                db.cache_category(row['description'], category)
-        else:
-            for orig_idx in batch.index:
-                new_categories_map[orig_idx] = "Uncategorized"
-            
-        progress_bar.progress((i + BATCH_SIZE) / len(uncached_df))
-        time.sleep(1)
-
-    progress_bar.empty()
-    
-    # Apply new categories to original dataframe
-    for idx, category in new_categories_map.items():
-        expenses_df.at[idx, 'category'] = category
-        
     return expenses_df
