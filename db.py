@@ -266,5 +266,76 @@ def cache_category(user_id, description, category_name):
     finally:
         conn.close()
 
+def export_user_data(user_id):
+    """Exports all user data to a dictionary of DataFrames."""
+    conn = get_connection()
+    
+    categories = pd.read_sql_query("SELECT * FROM categories WHERE user_id = ?", conn, params=(user_id,))
+    expenses = pd.read_sql_query("SELECT * FROM expenses WHERE user_id = ?", conn, params=(user_id,))
+    income = pd.read_sql_query("SELECT * FROM income WHERE user_id = ?", conn, params=(user_id,))
+    
+    conn.close()
+    
+    return {
+        "categories": categories,
+        "expenses": expenses,
+        "income": income
+    }
+
+def import_user_data(user_id, data):
+    """Imports user data from a dictionary of DataFrames."""
+    conn = get_connection()
+    c = conn.cursor()
+    
+    try:
+        # 1. Import Categories
+        if 'categories' in data and not data['categories'].empty:
+            for _, row in data['categories'].iterrows():
+                try:
+                    c.execute('INSERT INTO categories (user_id, name, year_projection) VALUES (?, ?, ?)',
+                              (user_id, row['name'], row['year_projection']))
+                except sqlite3.IntegrityError:
+                    # Category might already exist, update projection
+                    c.execute('UPDATE categories SET year_projection = ? WHERE user_id = ? AND name = ?',
+                              (row['year_projection'], user_id, row['name']))
+        
+        # Get updated category map (name -> id)
+        c.execute('SELECT name, id FROM categories WHERE user_id = ?', (user_id,))
+        cat_map = dict(c.fetchall())
+        
+        # 2. Import Expenses
+        if 'expenses' in data and not data['expenses'].empty:
+            for _, row in data['expenses'].iterrows():
+                # We need to map the category name to the new category ID
+                # The export might contain category_id which is invalid in the new context
+                # So we need to join with categories on export or rely on name if available.
+                # Since our export is raw table dump, expenses has category_id.
+                # We need to look up the category name from the exported categories df first.
+                
+                # Find category name from exported data
+                cat_name = None
+                if 'categories' in data:
+                    cat_row = data['categories'][data['categories']['id'] == row['category_id']]
+                    if not cat_row.empty:
+                        cat_name = cat_row.iloc[0]['name']
+                
+                if cat_name and cat_name in cat_map:
+                    new_cat_id = cat_map[cat_name]
+                    c.execute('INSERT INTO expenses (user_id, category_id, amount, date, description) VALUES (?, ?, ?, ?, ?)',
+                              (user_id, new_cat_id, row['amount'], row['date'], row['description']))
+        
+        # 3. Import Income
+        if 'income' in data and not data['income'].empty:
+            for _, row in data['income'].iterrows():
+                c.execute('INSERT INTO income (user_id, amount, date, description, source) VALUES (?, ?, ?, ?, ?)',
+                          (user_id, row['amount'], row['date'], row['description'], row['source']))
+                          
+        conn.commit()
+        return True, "Data imported successfully!"
+    except Exception as e:
+        return False, f"Error importing data: {e}"
+    finally:
+        conn.close()
+
 if __name__ == "__main__":
     init_db()

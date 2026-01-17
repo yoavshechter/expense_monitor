@@ -69,7 +69,7 @@ def show_main_app():
         st.session_state['user_id'] = None
         st.rerun()
         
-    page = st.sidebar.selectbox("Navigate", ["Dashboard", "Add Expense", "Add Income", "Import Expenses", "Manage Categories"])
+    page = st.sidebar.selectbox("Navigate", ["Dashboard", "Add Expense", "Add Income", "Import Expenses", "Manage Categories", "Backup & Restore"])
 
     if page == "Dashboard":
         show_dashboard(user_id)
@@ -81,6 +81,8 @@ def show_main_app():
         show_import_expenses(user_id)
     elif page == "Manage Categories":
         show_manage_categories(user_id)
+    elif page == "Backup & Restore":
+        show_backup_restore(user_id)
 
 def show_dashboard(user_id):
     st.header("Dashboard")
@@ -423,6 +425,78 @@ def show_manage_categories(user_id):
                     st.rerun()
                 else:
                     st.error("Error deleting category.")
+
+def show_backup_restore(user_id):
+    st.header("Backup & Restore Data")
+    
+    st.subheader("Export Data")
+    st.write("Download all your data (Expenses, Income, Categories) as a single CSV file.")
+    
+    if st.button("Generate Backup"):
+        data = db.export_user_data(user_id)
+        
+        # Combine into one CSV for simplicity (or zip multiple)
+        # We'll use a simple format: Type column to distinguish
+        
+        dfs = []
+        if not data['categories'].empty:
+            df_cat = data['categories'].copy()
+            df_cat['Type'] = 'Category'
+            dfs.append(df_cat)
+            
+        if not data['expenses'].empty:
+            df_exp = data['expenses'].copy()
+            df_exp['Type'] = 'Expense'
+            dfs.append(df_exp)
+            
+        if not data['income'].empty:
+            df_inc = data['income'].copy()
+            df_inc['Type'] = 'Income'
+            dfs.append(df_inc)
+            
+        if dfs:
+            final_df = pd.concat(dfs, ignore_index=True)
+            csv = final_df.to_csv(index=False).encode('utf-8')
+            
+            st.download_button(
+                label="Download Backup CSV",
+                data=csv,
+                file_name=f"expense_tracker_backup_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+            )
+        else:
+            st.warning("No data to export.")
+
+    st.markdown("---")
+    st.subheader("Restore Data")
+    st.warning("⚠️ Restoring data will append to your existing data. Duplicates might occur if not careful.")
+    
+    uploaded_file = st.file_uploader("Upload Backup CSV", type=["csv"])
+    
+    if uploaded_file is not None:
+        if st.button("Restore Data"):
+            try:
+                df = pd.read_csv(uploaded_file)
+                
+                # Split back into dictionary
+                data_to_import = {}
+                
+                if 'Type' in df.columns:
+                    data_to_import['categories'] = df[df['Type'] == 'Category'].drop(columns=['Type'])
+                    data_to_import['expenses'] = df[df['Type'] == 'Expense'].drop(columns=['Type'])
+                    data_to_import['income'] = df[df['Type'] == 'Income'].drop(columns=['Type'])
+                    
+                    success, message = db.import_user_data(user_id, data_to_import)
+                    
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+                else:
+                    st.error("Invalid backup file format. Missing 'Type' column.")
+                    
+            except Exception as e:
+                st.error(f"Error processing file: {e}")
 
 if __name__ == "__main__":
     main()
