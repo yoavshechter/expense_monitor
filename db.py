@@ -84,9 +84,9 @@ def create_user(username, password):
     try:
         c.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, password_hash))
         conn.commit()
-        return True
+        return c.lastrowid
     except sqlite3.IntegrityError:
-        return False
+        return None
     finally:
         conn.close()
 
@@ -161,6 +161,19 @@ def add_income(user_id, amount, date, description, source):
               (user_id, amount, date, description, source))
     conn.commit()
     conn.close()
+
+def delete_income(user_id, income_id):
+    conn = get_connection()
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM income WHERE id = ? AND user_id = ?', (income_id, user_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error deleting income: {e}")
+        return False
+    finally:
+        conn.close()
 
 def get_categories(user_id):
     conn = get_connection()
@@ -243,6 +256,18 @@ def get_income_records(user_id, year, month):
         ORDER BY date DESC
     '''
     df = pd.read_sql_query(query, conn, params=(user_id, month_str))
+    conn.close()
+    return df
+
+def get_yearly_income_records(user_id, year):
+    conn = get_connection()
+    year_str = str(year)
+    query = '''
+        SELECT * FROM income
+        WHERE user_id = ? AND strftime('%Y', date) = ?
+        ORDER BY date DESC
+    '''
+    df = pd.read_sql_query(query, conn, params=(user_id, year_str))
     conn.close()
     return df
 

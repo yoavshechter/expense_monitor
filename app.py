@@ -53,8 +53,11 @@ def show_login_page():
             
             if submitted:
                 if new_username and new_password:
-                    if db.create_user(new_username, new_password):
-                        st.success("User created successfully! Please login.")
+                    user_id = db.create_user(new_username, new_password)
+                    if user_id:
+                        st.session_state['user_id'] = user_id
+                        st.success("User created successfully! Logging in...")
+                        st.rerun()
                     else:
                         st.error("Username already exists")
                 else:
@@ -278,21 +281,55 @@ def show_add_income(user_id):
             
         source = st.text_input("Source (e.g., Salary, Bonus)")
         description = st.text_input("Description")
+        is_recurring = st.checkbox("Repeat until December (inclusive)")
         
         submitted = st.form_submit_button("Add Income")
         
         if submitted:
-            # Default to 1st of the month
-            date_str = f"{year}-{month:02d}-01"
-            db.add_income(user_id, amount, date_str, description, source)
-            st.success("Income added successfully!")
+            if is_recurring:
+                count = 0
+                for m in range(month, 13):
+                    date_str = f"{year}-{m:02d}-01"
+                    db.add_income(user_id, amount, date_str, description, source)
+                    count += 1
+                st.success(f"Income added successfully for {count} months!")
+            else:
+                # Default to 1st of the month
+                date_str = f"{year}-{month:02d}-01"
+                db.add_income(user_id, amount, date_str, description, source)
+                st.success("Income added successfully!")
 
-    st.subheader("Recent Income")
-    current_year = datetime.now().year
-    current_month = datetime.now().month
-    income_records = db.get_income_records(user_id, current_year, current_month)
+    st.markdown("---")
+    st.subheader("Manage Income")
+    
+    # Filter by year for management
+    manage_year = st.number_input("Filter by Year", min_value=2020, max_value=2030, value=datetime.now().year, key="manage_income_year")
+    
+    income_records = db.get_yearly_income_records(user_id, manage_year)
+    
     if not income_records.empty:
         st.dataframe(income_records)
+        
+        st.write("### Delete Income")
+        with st.form("delete_income_form"):
+            # Create a list of formatted strings for the selectbox
+            income_options = income_records.apply(
+                lambda x: f"{x['id']}: {x['date']} - {x['source']} - ₪{x['amount']:,.2f} ({x['description']})", axis=1
+            ).tolist()
+            
+            selected_income_str = st.selectbox("Select Income to Delete", income_options)
+            delete_submitted = st.form_submit_button("Delete Selected Income")
+            
+            if delete_submitted:
+                # Extract ID from the selected string
+                income_id = int(selected_income_str.split(':')[0])
+                if db.delete_income(user_id, income_id):
+                    st.success("Income deleted successfully!")
+                    st.rerun()
+                else:
+                    st.error("Error deleting income.")
+    else:
+        st.info(f"No income records found for {manage_year}.")
 
 def show_import_expenses(user_id):
     st.header("Import Expenses from File")
